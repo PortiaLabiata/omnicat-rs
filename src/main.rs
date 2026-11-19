@@ -1,27 +1,33 @@
-use futures::{Sink, Stream, StreamExt, SinkExt};
-use tokio::net::UdpSocket;
-use utl::frame::*;
-use utl::udp::EndpointUdp;
+mod config;
+
+use tokio::io::{Error, ErrorKind};
 
 #[tokio::main]
 async fn main() -> tokio::io::Result<()> {
-    let sock = UdpSocket::bind("127.0.0.1:25000").await?;
-    let mut ep = EndpointUdp::new(sock, 1500);
 
-    loop {
-        let dg = match ep.next().await {
-            Some(v) => v,
-            None => continue,
-        };
-
-        if dg.is_err() {
-            panic!("Failed to read datagram: {:?}", dg.unwrap_err());
-        }
-
-        let data = dg.unwrap();
-        println!("GOT: {:?}", data.data);
-
-        ep.feed(data).await?;
-        ep.flush().await?;
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() < 2 {
+        eprintln!("Invalid number of arguments: config filename required");
+        return Err(Error::from(ErrorKind::InvalidInput));
     }
+
+    let config_file = std::fs::File::open(&args[1]);
+    if let Err(e) = config_file {
+        eprintln!("Failed to open file: {}", e);
+        return Err(Error::from(ErrorKind::NotFound));
+    }
+
+    let config: Result<config::Config, _> = serde_json::from_reader(config_file.unwrap());
+    if let Err(e) = config {
+        eprintln!("Failed to load config: {}", e);
+        return Err(Error::from(ErrorKind::InvalidData));
+    }
+
+    let config = config.unwrap();
+    if let Err(e) = config.validate() {
+        eprintln!("Failed to create endpoints: {}", e);
+        return Err(Error::from(ErrorKind::InvalidData));
+    }
+
+    Ok(())
 }
