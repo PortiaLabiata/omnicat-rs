@@ -2,12 +2,11 @@ mod config;
 
 use std::collections::HashMap;
 
+use futures::{SinkExt, StreamExt, stream::FuturesUnordered};
 use tokio::io::{Error, ErrorKind};
-use futures::{StreamExt, SinkExt, stream::FuturesUnordered};
 
 #[tokio::main]
 async fn main() -> tokio::io::Result<()> {
-
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
         eprintln!("Invalid number of arguments: config filename required");
@@ -34,18 +33,6 @@ async fn main() -> tokio::io::Result<()> {
 
     let endpoint_num = config.configs.len();
     let mut endpoints = Vec::with_capacity(endpoint_num);
-    for config in config.configs.iter() {
-        let ret = match config.create().await {
-            Ok(v) => v,
-            Err(e) => {
-                eprintln!("Failed to create endpoint '{}': {}",
-                    config.name(), e);
-                return Err(Error::from(ErrorKind::InvalidData));
-            }
-        };
-
-        endpoints.push(ret);
-    }
 
     let mut names_map = HashMap::with_capacity(endpoint_num);
     for (i, config) in config.configs.iter().enumerate() {
@@ -64,15 +51,32 @@ async fn main() -> tokio::io::Result<()> {
         destinations.insert(idx, dests);
     }
 
+    let mut creation_futures = FuturesUnordered::new();
+    for config in config.configs.iter() {
+        creation_futures.push(async move {
+            config.create().await
+                .map_err(|v| (v, config.name()))
+        });
+    }
+
+    while let Some(r) = creation_futures.next().await {
+        match r {
+            Ok(v) => endpoints.push(v),
+            Err((e, name)) => {
+                eprintln!("Failed to create endpoint '{}': {}",
+                    name, e);
+                return Err(Error::from(ErrorKind::InvalidData));
+            }
+        }
+    }
+
     loop {
         let (index, frame) = {
             let mut futures: FuturesUnordered<_> = endpoints
                 .iter_mut()
                 .enumerate()
-                .map(|(i, v)| {
-                    async move {
-                        return (i, v.next().await);
-                    } 
+                .map(|(i, v)| async move {
+                    return (i, v.next().await);
                 })
                 .collect();
 
@@ -93,7 +97,8 @@ async fn main() -> tokio::io::Result<()> {
         }
 
         let frame = frame.unwrap();
-        for &dest_index in destinations.get(&index)
+        for &dest_index in destinations
+            .get(&index)
             .expect("Failed to find existing endpoint")
         {
             let ep = &mut endpoints[dest_index];

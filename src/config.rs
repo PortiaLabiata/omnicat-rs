@@ -1,7 +1,9 @@
 use std::collections::HashSet;
-use utl::{frame::BoxEndpoint, udp::EndpointUdp};
-use tokio::net::{UdpSocket};
+use std::net::SocketAddr;
 use tokio::io;
+use tokio::net::{TcpListener, TcpStream, UdpSocket};
+use utl::tcp::EndpointTcp;
+use utl::{frame::BoxEndpoint, udp::EndpointUdp};
 
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -50,12 +52,9 @@ impl std::fmt::Display for ConfigError {
         use ConfigError::*;
 
         match self {
-            RepeatingName(s) 
-                => write!(f, "repeating name '{}'", s),
-            NonExistingDestination(s) 
-                => write!(f, "non-existent destination '{}'", s),
-            Loop(s)
-                => write!(f, "endpoint is itself's destination: '{}'", s),
+            RepeatingName(s) => write!(f, "repeating name '{}'", s),
+            NonExistingDestination(s) => write!(f, "non-existent destination '{}'", s),
+            Loop(s) => write!(f, "endpoint is itself's destination: '{}'", s),
         }
     }
 }
@@ -69,7 +68,7 @@ impl Config {
             if names.contains(name) {
                 return Err(ConfigError::RepeatingName(name.clone()));
             }
-            names.insert(name); 
+            names.insert(name);
 
             for dst in config.to.iter() {
                 if dst == name {
@@ -94,7 +93,7 @@ impl EndpointConfig {
     pub async fn create(&self) -> io::Result<BoxEndpoint> {
         match self.kind {
             EndpointKind::Udp => self.create_udp().await,
-            EndpointKind::Tcp => todo!("Unimplemented"),
+            EndpointKind::Tcp => self.create_tcp().await,
         }
     }
 
@@ -111,11 +110,11 @@ impl EndpointConfig {
         match self.role {
             EndpointRole::Server => {
                 sock = UdpSocket::bind(&self.addr).await;
-            },
+            }
 
             EndpointRole::Client => {
                 sock = UdpSocket::bind("0.0.0.0:0").await;
-            },
+            }
         };
 
         if let Err(e) = sock {
@@ -124,5 +123,27 @@ impl EndpointConfig {
 
         let sock = sock.unwrap();
         Ok(Box::pin(EndpointUdp::new(sock, self.bufsize)))
+    }
+
+    async fn create_tcp(&self) -> io::Result<BoxEndpoint> {
+        let addr = match self.addr.parse::<SocketAddr>() {
+            Ok(v) => v,
+            Err(_) => {
+                return Err(io::Error::from(io::ErrorKind::InvalidInput));
+            }
+        };
+
+        let stream = match self.role {
+            EndpointRole::Server => {
+                let listener = TcpListener::bind(addr).await?;
+                listener.accept().await?.0
+            }
+
+            EndpointRole::Client => {
+                TcpStream::connect(addr).await?
+            }
+        };
+
+        Ok(Box::pin(EndpointTcp::new(stream, self.bufsize)))
     }
 }
