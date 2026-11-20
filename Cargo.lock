@@ -264,6 +264,7 @@ checksum = "a2c754d6c33795a1c324727428e5a7dedb5b06195f9890bdbcba760d3e246563"
 [[package]]
 name = "utl"
 version = "0.1.0"
+source = "git+https://github.com/PortiaLabiata/utl.git#0741f751a793ca39c430cdfd3df8eb23272f9d65"
 dependencies = [
  "bytes",
  "futures",
