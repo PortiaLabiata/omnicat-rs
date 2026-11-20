@@ -1,6 +1,7 @@
 mod config;
 
 use tokio::io::{Error, ErrorKind};
+use futures::{StreamExt, stream::FuturesUnordered};
 
 #[tokio::main]
 async fn main() -> tokio::io::Result<()> {
@@ -29,5 +30,33 @@ async fn main() -> tokio::io::Result<()> {
         return Err(Error::from(ErrorKind::InvalidData));
     }
 
-    Ok(())
+    let mut endpoints = Vec::with_capacity(config.configs.len());
+    for config in config.configs.iter() {
+        let ret = match config.create().await {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("Failed to create endpoint '{}': {}",
+                    config.name(), e);
+                return Err(Error::from(ErrorKind::InvalidData));
+            }
+        };
+
+        endpoints.push(ret);
+    }
+
+    loop {
+        let mut futures: FuturesUnordered<_> = endpoints
+            .iter_mut()
+            .enumerate()
+            .map(|(i, v)| {
+                async move {
+                    return (i, v.next().await);
+                } 
+            })
+            .collect();
+
+        if let Some((index, frame)) = futures.next().await {
+            println!("GOT from {}", index); 
+        }
+    }
 }

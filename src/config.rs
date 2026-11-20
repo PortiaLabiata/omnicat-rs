@@ -1,4 +1,7 @@
 use std::collections::HashSet;
+use utl::{frame::BoxEndpoint, udp::EndpointUdp};
+use tokio::net::{UdpSocket};
+use tokio::io;
 
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -8,30 +11,32 @@ pub enum EndpointKind {
 }
 
 #[derive(serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum EndpointRole {
+    Server,
+    Client,
+}
+
+#[derive(serde::Deserialize)]
 pub struct EndpointConfig {
     kind: EndpointKind,
     name: String,
-
-    #[serde(default = "addr_default")]
+    role: EndpointRole,
     addr: String,
 
-    #[serde(default = "port_default")]
-    port: u16,
+    #[serde(default = "bufsize_default")]
+    bufsize: usize,
 
     to: Vec<String>,
 }
 
-fn addr_default() -> String {
-    return "0.0.0.0".to_string();
-}
-
-fn port_default() -> u16 {
-    return 0;
+fn bufsize_default() -> usize {
+    return 1500;
 }
 
 #[derive(serde::Deserialize)]
 pub struct Config {
-    configs: Vec<EndpointConfig>,
+    pub configs: Vec<EndpointConfig>,
 }
 
 pub enum ConfigError {
@@ -82,5 +87,38 @@ impl Config {
         }
 
         Ok(())
+    }
+}
+
+impl EndpointConfig {
+    pub async fn create(&self) -> io::Result<BoxEndpoint> {
+        match self.kind {
+            EndpointKind::Udp => self.create_udp().await,
+            EndpointKind::Tcp => todo!("Unimplemented"),
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        return &self.name;
+    }
+
+    async fn create_udp(&self) -> io::Result<BoxEndpoint> {
+        let sock;
+        match self.role {
+            EndpointRole::Server => {
+                sock = UdpSocket::bind(&self.addr).await;
+            },
+
+            EndpointRole::Client => {
+                sock = UdpSocket::bind("0.0.0.0:0").await;
+            },
+        };
+
+        if let Err(e) = sock {
+            return Err(e);
+        }
+
+        let sock = sock.unwrap();
+        Ok(Box::pin(EndpointUdp::new(sock, self.bufsize)))
     }
 }
