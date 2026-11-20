@@ -1,7 +1,9 @@
 mod config;
 
+use std::collections::HashMap;
+
 use tokio::io::{Error, ErrorKind};
-use futures::{StreamExt, stream::FuturesUnordered};
+use futures::{StreamExt, SinkExt, stream::FuturesUnordered};
 
 #[tokio::main]
 async fn main() -> tokio::io::Result<()> {
@@ -30,7 +32,8 @@ async fn main() -> tokio::io::Result<()> {
         return Err(Error::from(ErrorKind::InvalidData));
     }
 
-    let mut endpoints = Vec::with_capacity(config.configs.len());
+    let endpoint_num = config.configs.len();
+    let mut endpoints = Vec::with_capacity(endpoint_num);
     for config in config.configs.iter() {
         let ret = match config.create().await {
             Ok(v) => v,
@@ -44,19 +47,60 @@ async fn main() -> tokio::io::Result<()> {
         endpoints.push(ret);
     }
 
-    loop {
-        let mut futures: FuturesUnordered<_> = endpoints
-            .iter_mut()
-            .enumerate()
-            .map(|(i, v)| {
-                async move {
-                    return (i, v.next().await);
-                } 
-            })
+    let mut names_map = HashMap::with_capacity(endpoint_num);
+    for (i, config) in config.configs.iter().enumerate() {
+        names_map.insert(config.name(), i);
+    }
+
+    let mut destinations = HashMap::with_capacity(endpoint_num);
+    for config_i in config.configs.iter() {
+        let dests: Vec<_> = config_i
+            .to()
+            .iter()
+            .map(|v| *names_map.get(v).unwrap())
             .collect();
 
-        if let Some((index, frame)) = futures.next().await {
-            println!("GOT from {}", index); 
+        let &idx = names_map.get(&config_i.name()).unwrap();
+        destinations.insert(idx, dests);
+    }
+
+    loop {
+        let (index, frame) = {
+            let mut futures: FuturesUnordered<_> = endpoints
+                .iter_mut()
+                .enumerate()
+                .map(|(i, v)| {
+                    async move {
+                        return (i, v.next().await);
+                    } 
+                })
+                .collect();
+
+            match futures.next().await {
+                Some(x) => x,
+                None => continue,
+            }
+        };
+
+        if frame.is_none() {
+            continue;
+        }
+
+        let frame = frame.unwrap();
+        if let Err(e) = frame {
+            eprintln!("RX error: {}", e);
+            break;
+        }
+
+        let frame = frame.unwrap();
+        for &dest_index in destinations.get(&index)
+            .expect("Failed to find existing endpoint")
+        {
+            let ep = &mut endpoints[dest_index];
+            let _ = ep.feed(frame.clone()).await;
+            let _ = ep.flush().await;
         }
     }
+
+    Ok(())
 }
