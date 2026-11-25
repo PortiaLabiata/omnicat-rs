@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::net::SocketAddr;
 use tokio::io;
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
+use utl::serial::EndpointSerial;
 use utl::tcp::EndpointTcp;
 use utl::{frame::BoxEndpoint, udp::EndpointUdp};
 
@@ -10,6 +11,7 @@ use utl::{frame::BoxEndpoint, udp::EndpointUdp};
 pub enum EndpointKind {
     Udp,
     Tcp,
+    Serial,
 }
 
 #[derive(serde::Deserialize)]
@@ -23,8 +25,14 @@ pub enum EndpointRole {
 pub struct EndpointConfig {
     kind: EndpointKind,
     name: String,
+
+    #[serde(default = "role_default")]
     role: EndpointRole,
+
     addr: String,
+
+    #[serde(default = "baud_default")]
+    baud: u32,
 
     #[serde(default = "bufsize_default")]
     bufsize: usize,
@@ -34,6 +42,14 @@ pub struct EndpointConfig {
 
 fn bufsize_default() -> usize {
     return 1500;
+}
+
+fn baud_default() -> u32 {
+    return 115200;
+}
+
+fn role_default() -> EndpointRole {
+    return EndpointRole::Server;
 }
 
 #[derive(serde::Deserialize)]
@@ -94,6 +110,7 @@ impl EndpointConfig {
         match self.kind {
             EndpointKind::Udp => self.create_udp().await,
             EndpointKind::Tcp => self.create_tcp().await,
+            EndpointKind::Serial => self.create_serial().await,
         }
     }
 
@@ -139,11 +156,16 @@ impl EndpointConfig {
                 listener.accept().await?.0
             }
 
-            EndpointRole::Client => {
-                TcpStream::connect(addr).await?
-            }
+            EndpointRole::Client => TcpStream::connect(addr).await?,
         };
 
         Ok(Box::pin(EndpointTcp::new(stream, self.bufsize)))
+    }
+
+    async fn create_serial(&self) -> io::Result<BoxEndpoint> {
+        let builder = tokio_serial::new(self.addr.clone(), self.baud);
+        let stream = tokio_serial::SerialStream::open(&builder)
+            .map_err(io::Error::other)?;
+        Ok(Box::pin(EndpointSerial::new(stream, self.bufsize)))
     }
 }
