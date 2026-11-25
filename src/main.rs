@@ -52,10 +52,12 @@ async fn main() -> tokio::io::Result<()> {
     }
 
     let mut creation_futures = FuturesUnordered::new();
-    for config in config.configs.iter() {
+    for (i, config) in config.configs.iter().enumerate() {
         creation_futures.push(async move {
-            config.create().await
+            config.create()
+                .await
                 .map_err(|v| (v, config.name()))
+                .map(|v| (v, i))
         });
     }
 
@@ -69,6 +71,12 @@ async fn main() -> tokio::io::Result<()> {
             }
         }
     }
+
+    endpoints.sort_by(|a, b| b.1.cmp(&a.1));
+    let mut endpoints: Vec<_> = endpoints
+        .iter_mut()
+        .map(|(v, _)| v)
+        .collect();
 
     loop {
         let (index, frame) = {
