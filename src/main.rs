@@ -72,7 +72,7 @@ async fn main() -> tokio::io::Result<()> {
         }
     }
 
-    endpoints.sort_by(|a, b| b.1.cmp(&a.1));
+    endpoints.sort_by(|a, b| a.1.cmp(&b.1));
     let mut endpoints: Vec<_> = endpoints
         .iter_mut()
         .map(|(v, _)| v)
