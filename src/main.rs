@@ -2,18 +2,26 @@ mod config;
 
 use std::collections::HashMap;
 
+use clap::Parser;
 use futures::{SinkExt, StreamExt, stream::FuturesUnordered};
 use tokio::io::{Error, ErrorKind};
 
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    /// Config filename, defaults to omnicat.json
+    name: String,
+
+    /// Enable debug features?
+    #[arg(short, long, default_value_t = false)]
+    debug: bool,
+}
+
 #[tokio::main]
 async fn main() -> tokio::io::Result<()> {
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() < 2 {
-        eprintln!("Invalid number of arguments: config filename required");
-        return Err(Error::from(ErrorKind::InvalidInput));
-    }
+    let args = Args::parse();
 
-    let config_file = std::fs::File::open(&args[1]);
+    let config_file = std::fs::File::open(&args.name);
     if let Err(e) = config_file {
         eprintln!("Failed to open file: {}", e);
         return Err(Error::from(ErrorKind::NotFound));
@@ -39,6 +47,11 @@ async fn main() -> tokio::io::Result<()> {
         names_map.insert(config.name(), i);
     }
 
+    let names_reverse_map: HashMap<_, _> = names_map
+        .iter()
+        .map(|(k, &v)| (v.clone(), k))
+        .collect();
+
     let mut destinations = HashMap::with_capacity(endpoint_num);
     for config_i in config.configs.iter() {
         let dests: Vec<_> = config_i
@@ -54,7 +67,8 @@ async fn main() -> tokio::io::Result<()> {
     let mut creation_futures = FuturesUnordered::new();
     for (i, config) in config.configs.iter().enumerate() {
         creation_futures.push(async move {
-            config.create()
+            config
+                .create()
                 .await
                 .map_err(|v| (v, config.name()))
                 .map(|v| (v, i))
@@ -65,18 +79,14 @@ async fn main() -> tokio::io::Result<()> {
         match r {
             Ok(v) => endpoints.push(v),
             Err((e, name)) => {
-                eprintln!("Failed to create endpoint '{}': {}",
-                    name, e);
+                eprintln!("Failed to create endpoint '{}': {}", name, e);
                 return Err(Error::from(ErrorKind::InvalidData));
             }
         }
     }
 
     endpoints.sort_by(|a, b| a.1.cmp(&b.1));
-    let mut endpoints: Vec<_> = endpoints
-        .iter_mut()
-        .map(|(v, _)| v)
-        .collect();
+    let mut endpoints: Vec<_> = endpoints.iter_mut().map(|(v, _)| v).collect();
 
     loop {
         let (index, frame) = {
@@ -110,6 +120,13 @@ async fn main() -> tokio::io::Result<()> {
             .expect("Failed to find existing endpoint")
         {
             let ep = &mut endpoints[dest_index];
+
+            if args.debug {
+                let source_name = &names_reverse_map[&index];
+                let dest_name = &names_reverse_map[&dest_index];
+                println!("FROM {} TO {}: {:?}", source_name, dest_name, frame.data);
+            }
+
             let _ = ep.feed(frame.clone()).await;
             let _ = ep.flush().await;
         }
