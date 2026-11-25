@@ -7,7 +7,7 @@ use futures::{SinkExt, StreamExt, stream::FuturesUnordered};
 use tokio::io::{Error, ErrorKind};
 
 #[derive(Parser, Debug)]
-#[command(version, about, long_about = None)]
+#[command(version = "1.0.0", about, long_about = None)]
 struct Args {
     /// Config filename, defaults to omnicat.json
     name: String,

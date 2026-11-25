@@ -10,4 +10,4 @@ serde = { version = "1.0.229", features = ["serde_derive"] }
 serde_json = "1.0.154"
 tokio = { version = "1.54.1", features = ["net", "rt", "macros", "rt-multi-thread"] }
 tokio-serial = "5.5.0"
-utl = { path = "../utl" }
+utl = { git = "https://github.com/PortiaLabiata/utl.git" }
